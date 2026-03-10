@@ -1,4 +1,4 @@
-realtime
-supabase
 httpx
+supabase
+realtime
 python-dotenv
