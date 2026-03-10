@@ -1,0 +1,4 @@
+realtime
+supabase
+httpx
+python-dotenv
