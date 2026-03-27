@@ -70,19 +70,20 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 #  RANKING HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_priority(score: int) -> str:
-    """Map numeric score → High / Medium / Low."""
-    if score >= 70:   return "High"
-    elif score >= 40: return "Medium"
-    else:             return "Low"
+def get_type(score: int) -> str:
+   
+    if score >= 60:   return "Hot"
+    elif score >= 10: return "Warm"
+    else:             return "Cold"
 
 
-def get_next_action(priority: str) -> str:
-    return {
-        "High":   "Call & Close",
-        "Medium": "Follow-up Call",
-        "Low":    "Email Nurturing",
-    }[priority]
+def get_next_action(lead_type: str) -> str:
+    if lead_type == "Hot":
+        return "Call & Close"
+    elif lead_type == "Warm":
+        return "Follow-up Call"
+    else:
+        return "Email Nurturing"
 
 
 def predict_ltv(score: int) -> float:
@@ -125,19 +126,25 @@ def rank_lead_with_rules(lead: dict) -> dict:
         rule_type = (rule.get("ruleType") or "").lower()
         key       = (rule.get("ruleKey")  or "").lower()
         base      = rule.get("baseScore", 0)
-        weight    = rule.get("weight", 1)
+        weight    = float(rule.get("weight", 1))
 
+        # ✅ SOURCE (flexible match)
         if rule_type == "source":
-            if (lead.get("source") or "").lower() == key:
+            source = (lead.get("source") or "").lower()
+            if key in source:
                 total_score += base * weight
 
+        # ✅ CAMPAIGN (flexible match)
         elif rule_type == "campaign":
-            if (lead.get("campaign") or "").lower() == key:
+            campaign = (lead.get("campaign") or "").lower()
+            if key in campaign:
                 total_score += base * weight
 
+
+        # ✅ TAG (flexible match)
         elif rule_type == "tag":
             tags = [t.lower() for t in (lead.get("tags") or [])]
-            if key in tags:
+            if any(key in t for t in tags):
                 total_score += base * weight
 
     # Baseline fallback when no rules matched
@@ -151,14 +158,18 @@ def rank_lead_with_rules(lead: dict) -> dict:
             total_score += 10
 
     final_score = int(max(0, min(total_score, 100)))
-    priority    = get_priority(final_score)
+    lead_type = get_type(final_score)
+    print("DEBUG → score:", final_score)
+    print("DEBUG → type:", lead_type)
+    next_action = get_next_action(lead_type)
+    ltv = predict_ltv(final_score)
 
     return {
         "aiScore":        final_score,
         "score":          final_score,
-        "priority":       priority,
-        "nextBestAction": get_next_action(priority),
-        "predictedLTV":   predict_ltv(final_score),
+        "type":            lead_type,
+        "nextBestAction": next_action,
+        "predictedLTV":   ltv,
     }
 
 
@@ -176,9 +187,9 @@ async def process_lead(lead: dict):
     result = rank_lead_with_rules(lead)
     print(
         f"    → Score: {result['aiScore']}"
-        f" | Priority: {result['priority']}"
-        f" | Action: {result['nextBestAction']}"
-        f" | LTV: ₹{result['predictedLTV']:,.0f}"
+        f" | type:     {result['type']}"
+        f" | Action:   {result['nextBestAction']}"
+        f" | LTV:      ₹{result['predictedLTV']:,.0f}"
     )
 
     try:
@@ -188,7 +199,7 @@ async def process_lead(lead: dict):
                 json={
                     "aiScore":        result["aiScore"],
                     "score":          result["score"],
-                    "priority":       result["priority"],
+                    "type":           result["type"],
                     "nextBestAction": result["nextBestAction"],
                     "predictedLTV":   result["predictedLTV"],
                 },
