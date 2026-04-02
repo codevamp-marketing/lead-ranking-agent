@@ -1,22 +1,42 @@
-# Exclude environment files
+# ── Secrets — NEVER bake into image ──────────────────────────────────────────
 .env
+.env.*
+*.env
 
-# Exclude git
+# ── Git ───────────────────────────────────────────────────────────────────────
 .git
 .gitignore
 
-# Exclude Python cache
-__pycache__
+# ── Python cache — rebuilt inside container ───────────────────────────────────
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pycache
+.Python
 
-# Exclude IDE files
-.vscode
-.idea
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
 
-# Exclude logs
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 
-# Exclude README if not needed in container
-# README.md
+# ── SQL scripts — only needed for DB setup, not runtime ──────────────────────
+sql/
+
+# ── Docs — not needed in container ───────────────────────────────────────────
+README.md
+*.md
+
+# ── OS artifacts ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
