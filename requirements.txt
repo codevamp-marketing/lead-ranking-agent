@@ -1,5 +1,5 @@
-# Core — Lead Ranking Agent (LISTEN/NOTIFY mode)
-supabase          # Supabase REST client for ScoringRule reads + Lead writes
-httpx             # Async HTTP client for PATCH calls to NestJS CRM API
-psycopg2-binary   # Direct Postgres connection for LISTEN/NOTIFY
-python-dotenv     # Load .env file
+# ── Core — Lead Ranking Agent ─────────────────────────────────────────────────
+supabase>=2.4.0          # Supabase REST client (ScoringRule reads + Lead writes)
+httpx>=0.27.0            # Async HTTP client for CRM PATCH calls
+psycopg2-binary>=2.9.9   # Direct Postgres for LISTEN/NOTIFY (binary = no gcc needed)
+python-dotenv>=1.0.0     # Load .env file
