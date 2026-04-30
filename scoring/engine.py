@@ -8,50 +8,23 @@ A lead score is built from two independent layers:
 
   Layer 1 — Rule-based table scores (admin-configurable via ScoringRule table)
              Source, Campaign, and Tag rules fetched from DB.
-             Admin can tune these in the CRM portal without touching code.
 
   Layer 2 — Signal-based heuristic scores (hardcoded domain knowledge)
-             These capture intent/quality signals from the lead's profile
-             that no admin-configurable rule can easily express:
-               • Course demand tier (MBA/PGDM rank higher than generic)
-               • Specialization completeness (filled = more serious)
-               • Contact info completeness (phone AND email = serious)
-               • Attribution data (UTM keyword / gclid presence = paid intent)
-               • Source quality multiplier (Google Ads > Referral > Manual etc.)
+             Course demand tier, contact completeness, attribution signals.
 
-Both layers are additive.  Final score is clamped to [0, 100].
+Both layers are additive. Final score is clamped to [0, 100].
 
-SCORING TABLE REFERENCE (Layer 2 defaults — matches your LeadSource enum)
-──────────────────────────────────────────────────────────────────────────
-  Source            Base
-  ──────────────    ─────
-  Google_Ads         25    ← High commercial intent (paid click)
-  Facebook_Ads       18    ← Broad awareness — lower intent
-  Instagram          15
-  LinkedIn           20    ← Professional, B2B adjacent
-  Website            20    ← Organic search = high intent
-  Referral           22    ← Trust signal — closes faster
-  Manual             10    ← Entered by counsellor — unknown quality
-  (missing)           5    ← No source = poor data hygiene
-
-  Course demand tier
-  ──────────────────
-  Tier-1 (MBA, PGDM, MCA, M.Tech)  → +20
-  Tier-2 (BBA, BCA, B.Tech, etc.)  → +12
-  Other / blank                     →  +5
-
-  Contact completeness
-  ────────────────────
-  phone AND email     → +15
-  phone only          → +10
-  email only          →  +5
-  neither             →   0
-
-  Specialization filled  → +8
-  Attribution UTM/gclid  → +5   (paid-ad confirmation)
+FIXES (v2.1)
+────────────
+  • _apply_db_rules: removed bidirectional "source in key" match.
+    The old logic matched "google" against "google_ads" (false positive).
+    Now only "key in source" is used (rule key must be a substring of
+    the lead's normalised source value), which is directional and safe.
+  • Blending ratio is now documented explicitly with rationale.
 """
 
 from __future__ import annotations
+import json
 
 # ── Course demand tiers ───────────────────────────────────────────────────────
 _TIER1_COURSES = {"mba", "pgdm", "mca", "m.tech", "mtech", "msc", "m.sc", "pgpm"}
@@ -59,13 +32,13 @@ _TIER2_COURSES = {"bba", "bca", "b.tech", "btech", "bsc", "b.sc", "bcom", "b.com
 
 # ── Source quality scores (matches LeadSource enum exactly) ──────────────────
 _SOURCE_SCORE: dict[str, int] = {
-    "google_ads":    25,
-    "facebook_ads":  18,
-    "instagram":     15,
-    "linkedin":      20,
-    "website":       20,
-    "referral":      22,
-    "manual":        10,
+    "google_ads":   25,
+    "facebook_ads": 18,
+    "instagram":    15,
+    "linkedin":     20,
+    "website":      20,
+    "referral":     22,
+    "manual":       10,
 }
 
 
@@ -76,14 +49,11 @@ _SOURCE_SCORE: dict[str, int] = {
 def _normalize(val: str) -> str:
     """
     Canonical form for matching: lowercase, underscores → spaces, strip.
-    Applied to BOTH the ruleKey and the lead field value so matching is
-    consistent regardless of how each side was entered.
 
     Examples:
       "Google_Ads"   → "google ads"
-      "google ads"   → "google ads"   ← your ScoringRule ruleKey format
-      "Google Ads"   → "google ads"
       "FACEBOOK_ADS" → "facebook ads"
+      "google ads"   → "google ads"
     """
     return val.lower().replace("_", " ").strip()
 
@@ -92,15 +62,16 @@ def _apply_db_rules(lead: dict, rules: list[dict]) -> int:
     """
     Iterates active ScoringRule rows and returns total matched score.
 
-    Your ScoringRule table columns (camelCase — Supabase REST returns as-is):
+    ScoringRule table columns:
         ruleType  TEXT  — "source" | "campaign" | "tag"
         ruleKey   TEXT  — e.g. "google ads", "facebook", "python bootcamp"
         baseScore INT   — raw point value
         weight    NUM   — multiplier (e.g. 1.4)
         active    BOOL
 
-    Matching uses _normalize() on BOTH sides — handles Google_Ads vs
-    "google ads" vs "Google Ads" transparently.
+    FIX: matching is now unidirectional (key in field_value).
+    The old bidirectional check (key in source OR source in key) caused
+    false positives: a lead with source="google" matched rule key="google_ads".
     """
     total = 0
     for rule in rules:
@@ -113,9 +84,9 @@ def _apply_db_rules(lead: dict, rules: list[dict]) -> int:
             continue   # skip malformed rules silently
 
         if rule_type == "source":
-            # Lead source comes from LeadSource enum: "Google_Ads", "Facebook_Ads" etc.
             source = _normalize(lead.get("source") or "")
-            if key in source or source in key:   # bidirectional — handles partial keys
+            # FIX: unidirectional — rule key must appear inside lead's source string
+            if key in source:
                 total += int(base * weight)
 
         elif rule_type == "campaign":
@@ -125,7 +96,7 @@ def _apply_db_rules(lead: dict, rules: list[dict]) -> int:
 
         elif rule_type == "tag":
             tags = [_normalize(t) for t in (lead.get("tags") or []) if t]
-            if any(key in t or t in key for t in tags):
+            if any(key in t for t in tags):
                 total += int(base * weight)
 
     return total
@@ -170,22 +141,20 @@ def _specialization_score(lead: dict) -> int:
 
 def _attribution_score(lead: dict) -> int:
     """
-    Attribution JSON may contain: gclid, fbclid, utm_source, utm_campaign,
-    utm_medium, landing_page, keyword.
-    Presence of gclid/fbclid confirms a paid-ad click — high intent signal.
+    Attribution JSON may contain: gclid, fbclid, utm_source, utm_campaign.
+    gclid/fbclid confirms a paid-ad click — high intent signal.
     """
     attr = lead.get("attribution") or {}
     if isinstance(attr, str):
         try:
-            import json
             attr = json.loads(attr)
         except Exception:
             attr = {}
     score = 0
     if attr.get("gclid") or attr.get("fbclid"):
-        score += 5   # Confirmed paid ad click
+        score += 5
     if attr.get("utm_campaign"):
-        score += 2   # Campaign-tagged traffic
+        score += 2
     return score
 
 
@@ -206,17 +175,19 @@ def _signal_score(lead: dict) -> int:
 def score_lead(lead: dict, rules: list[dict]) -> int:
     """
     Combines Layer 1 (DB rules) + Layer 2 (signal heuristics).
-    If DB rules produce nothing (empty table or no matches), Layer 2 alone
-    drives the score — agent never returns a misleading 0.
+
+    Blending rationale:
+      When admin rules are configured and matching, they represent
+      intentional business logic and should dominate (60%).
+      Signal heuristics provide a floor and refinement (40%).
+      If no rules match, signal score alone drives the result.
+
     Result is clamped to [0, 100].
     """
     rule_score   = _apply_db_rules(lead, rules)
     signal_score = _signal_score(lead)
 
-    # If admin has configured rules AND they matched, blend both layers.
-    # If no rules matched, rely entirely on signal scoring.
     if rule_score > 0:
-        # Blend: 60% rule-based, 40% signal — rules are intentional admin config
         combined = int(rule_score * 0.6 + signal_score * 0.4)
     else:
         combined = signal_score
@@ -229,7 +200,6 @@ def classify_lead(score: int) -> str:
     Hot  ≥ 60  — High priority, immediate call
     Warm ≥ 35  — Moderate priority, follow-up call
     Cold < 35  — Low priority, nurture sequence
-    Thresholds validated against LeadType enum: Hot | Warm | Cold
     """
     if score >= 60:
         return "Hot"
@@ -239,10 +209,7 @@ def classify_lead(score: int) -> str:
 
 
 def next_best_action(lead_type: str, lead: dict) -> str:
-    """
-    Returns the recommended next action string for the counsellor.
-    Uses lead_type as primary driver, but enriches with lead context.
-    """
+    """Returns the recommended next action string for the counsellor."""
     has_phone = bool((lead.get("phone") or "").strip())
 
     if lead_type == "Hot":
@@ -250,7 +217,6 @@ def next_best_action(lead_type: str, lead: dict) -> str:
     elif lead_type == "Warm":
         return "Follow-up Call — Schedule within 24 hours" if has_phone else "Send Course Brochure via Email"
     else:
-        # Cold — enroll in drip nurture sequence
         return "Email Nurturing — Enroll in 7-day drip sequence"
 
 
@@ -258,12 +224,10 @@ def predict_ltv(score: int, lead: dict) -> float:
     """
     Estimated lifetime value (fee revenue) in INR.
 
-    Formula:
-      base_fee × course_multiplier × conversion_probability
-
-    base_fee            = ₹2,00,000 (conservative average program fee)
-    course_multiplier   = 1.5 for Tier-1, 1.0 for Tier-2, 0.7 for others
-    conversion_prob     = score / 100
+    Formula:  base_fee × course_multiplier × conversion_probability
+      base_fee           = ₹2,00,000 (conservative average program fee)
+      course_multiplier  = 1.5 for Tier-1, 1.0 for Tier-2, 0.7 for others
+      conversion_prob    = score / 100
     """
     BASE_FEE = 200_000.0
 
@@ -275,5 +239,4 @@ def predict_ltv(score: int, lead: dict) -> float:
     else:
         multiplier = 0.7
 
-    ltv = BASE_FEE * multiplier * (score / 100)
-    return round(ltv, 2)
+    return round(BASE_FEE * multiplier * (score / 100), 2)
