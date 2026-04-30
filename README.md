@@ -1,4 +1,4 @@
-# F2Fintech — Lead Ranking Agent
+# Invertis — Lead Ranking Agent
 
 Production-grade AI marketing automation agent. Listens for new leads via Postgres LISTEN/NOTIFY, scores them using a two-layer engine, and writes AI fields back to the CRM — all in real-time, sub-second.
 
