@@ -100,6 +100,8 @@ _dlq: deque[DLQEntry] = deque(maxlen=1000)
 #  SIDE-EFFECT WRITERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+import uuid
+
 async def _log_ai_activity(lead_id: str, score: int, lead_type: str, action: str, ltv: float) -> None:
     description = (
         f"AI ranked this lead as '{lead_type}' (score {score}/100). "
@@ -109,6 +111,7 @@ async def _log_ai_activity(lead_id: str, score: int, lead_type: str, action: str
         db = _get_supabase()
         await asyncio.to_thread(
             lambda: db.table("Activity").insert({
+                "id":          str(uuid.uuid4()),
                 "leadId":      lead_id,
                 "type":        "AI_Insight",
                 "description": description,
@@ -141,6 +144,7 @@ async def _send_notification(lead: dict, lead_type: str, action: str) -> None:
         db = _get_supabase()
         await asyncio.to_thread(
             lambda: db.table("notifications").insert({
+                "id":     str(uuid.uuid4()),
                 "userId": counsellor_id,
                 "leadId": lead_id,
                 "title":  title_map.get(lead_type, f"New Lead: {lead_name}"),

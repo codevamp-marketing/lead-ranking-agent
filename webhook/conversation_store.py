@@ -128,84 +128,99 @@ def get_conversation_memory(lead_phone: str) -> list[dict]:
 #  SUPABASE WRITES — correct API for supabase-py 2.28
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _upsert_conversation_sync(lead_phone: str, lead_name: str) -> Optional[str]:
+import uuid
+
+def _resolve_lead_sync(lead_phone: str, lead_name: str) -> Optional[str]:
     """
-    Finds or creates a Conversation row for this lead phone.
-    Returns the UUID of the row, or None on failure.
-
-    FIX 1: supabase-py 2.28 does NOT support .upsert().select() chaining.
-    Solution: two-step approach:
-      Step A — upsert the row (no .select() chain)
-      Step B — immediately SELECT to get the UUID back
-
-    This is the correct pattern for supabase-py 2.x.
+    Finds the Lead by phone, or creates a new one if not found.
+    Returns the Lead UUID.
     """
     db = _get_supabase()
 
     try:
-        # Step A — upsert (insert or update on conflict)
-        # Do NOT chain .select() here — it crashes in 2.28
-        db.table("Conversation").upsert(
-            {
-                "leadId":    lead_phone,
-                "leadName":  lead_name or "Unknown",
-                "updatedAt": _now_iso(),
-            },
-            on_conflict="leadId",
-        ).execute()
-
-    except Exception as exc:
-        logger.error("conversation_upsert_failed", lead_phone=lead_phone, error=str(exc))
-        return None
-
-    try:
-        # Step B — fetch the UUID (separate query — always works in 2.28)
+        # Step 1: Try to find existing lead
         result = (
-            db.table("Conversation")
+            db.table("Lead")
             .select("id")
-            .eq("leadId", lead_phone)
+            .eq("phone", lead_phone)
             .limit(1)
             .execute()
         )
         rows = result.data or []
+        
+        # Fallback: Try without +91 if it has it
+        if not rows and lead_phone.startswith("+91"):
+            result = (
+                db.table("Lead")
+                .select("id")
+                .eq("phone", lead_phone[3:])
+                .limit(1)
+                .execute()
+            )
+            rows = result.data or []
+            
+        # Fallback: Try with +91 if it doesn't have it
+        if not rows and not lead_phone.startswith("+"):
+            result = (
+                db.table("Lead")
+                .select("id")
+                .eq("phone", f"+91{lead_phone}")
+                .limit(1)
+                .execute()
+            )
+            rows = result.data or []
+
         if rows:
             return rows[0]["id"]
 
-        logger.error(
-            "conversation_row_not_found_after_upsert",
-            lead_phone=lead_phone,
-            hint="Row was not created — check RLS policies on Conversation table in Supabase",
+        # Step 2: Create a new lead if none found
+        new_lead = (
+            db.table("Lead")
+            .insert({
+                "id": str(uuid.uuid4()),
+                "phone": lead_phone,
+                "name": lead_name or "Unknown",
+                "source": "Manual",
+                "pipelineStage": "New_Lead",
+                "qualificationStatus": "New_Lead",
+                "createdAt": _now_iso(),
+                "lastInteraction": _now_iso(),
+            })
+            .execute()
         )
-        return None
+        new_rows = new_lead.data or []
+        if new_rows:
+            return new_rows[0]["id"]
 
+        return None
     except Exception as exc:
-        logger.error("conversation_select_failed", lead_phone=lead_phone, error=str(exc))
+        logger.error("lead_resolution_failed", lead_phone=lead_phone, error=str(exc))
         return None
 
 
 def _insert_message_sync(
-    conversation_id: str, direction: str,
+    lead_id: str, lead_phone: str, direction: str,
     body: str, channel: str, sid: Optional[str],
 ) -> bool:
     """
-    Inserts one ConversationMessage row.
-    Returns True on success, False on failure.
+    Inserts one Message row directly linked to the Lead.
     """
     try:
         db = _get_supabase()
-        db.table("ConversationMessage").insert({
-            "conversationId": conversation_id,
-            "direction":      direction,
-            "body":           body or "",
-            "channel":        channel,
-            "twilioSid":      sid,
-            "createdAt":      _now_iso(),
+        db.table("Message").insert({
+            "leadId":    lead_id,
+            "phone":     lead_phone,
+            "direction": direction,
+            "body":      body or "",
+            "channel":   channel,
+            "twilioSid": sid,
+            "createdAt": _now_iso(),
         }).execute()
         return True
     except Exception as exc:
         logger.error(
             "message_insert_failed",
-            conversation_id=conversation_id,
+            lead_id=lead_id,
             direction=direction,
             error=str(exc),
         )
@@ -235,24 +250,21 @@ async def record_message(
     _memory_append(lead_phone, direction, body, channel, sid)
 
     # 3. Supabase — sync calls in thread pool (non-blocking to event loop)
-    conversation_id = await asyncio.to_thread(
-        _upsert_conversation_sync, lead_phone, lead_name
+    lead_id = await asyncio.to_thread(
+        _resolve_lead_sync, lead_phone, lead_name
     )
 
-    if not conversation_id:
+    if not lead_id:
         logger.warning(
             "message_stored_in_memory_only",
             lead_phone=lead_phone,
             direction=direction,
-            hint=(
-                "Check: (1) conversations.sql was run in Supabase SQL Editor, "
-                "(2) RLS is disabled on Conversation table or service key is used"
-            ),
+            hint="Could not resolve or create Lead in Supabase",
         )
         return False
 
     success = await asyncio.to_thread(
-        _insert_message_sync, conversation_id, direction, body, channel, sid
+        _insert_message_sync, lead_id, lead_phone, direction, body, channel, sid
     )
 
     if success:
@@ -269,22 +281,10 @@ async def get_conversation_history(lead_phone: str, limit: int = 50) -> list[dic
     def _fetch() -> list[dict]:
         db = _get_supabase()
 
-        conv = (
-            db.table("Conversation")
-            .select("id")
-            .eq("leadId", lead_phone)
-            .limit(1)
-            .execute()
-        )
-        rows = conv.data or []
-        if not rows:
-            return []
-
-        conv_id = rows[0]["id"]
         msgs = (
-            db.table("ConversationMessage")
+            db.table("Message")
             .select("direction, body, channel, twilioSid, createdAt")
-            .eq("conversationId", conv_id)
+            .eq("phone", lead_phone)
             .order("createdAt", desc=False)
             .limit(limit)
             .execute()
