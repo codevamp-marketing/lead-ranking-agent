@@ -1,4 +1,32 @@
-httpx
-supabase
-realtime
-python-dotenv
+# ── Supabase stack — pinned to avoid pyiceberg (introduced in storage3>=2.19) ──
+# Verified compatible set — all agree on httpx>=0.24,<0.26
+supabase==2.3.4
+gotrue==2.4.4
+postgrest==0.15.1
+storage3==0.7.7
+realtime==1.0.6
+supafunc==0.3.3       # 0.3.1 requires httpx<0.25 which conflicts; 0.3.3 allows <0.26
+
+# ── HTTP — must stay <0.26 (postgrest + supabase hard ceiling) ──────────────
+httpx==0.25.2
+anyio==4.2.0
+
+# ── Database ─────────────────────────────────────────────────────────────────
+psycopg2-binary==2.9.9
+
+# ── Messaging ────────────────────────────────────────────────────────────────
+twilio==8.13.0
+
+# ── AI / ML ──────────────────────────────────────────────────────────────────
+groq==0.4.2
+sentence-transformers==2.6.1
+
+# ── Web server ────────────────────────────────────────────────────────────────
+fastapi==0.109.2
+uvicorn==0.27.1
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+pandas==2.2.0
+openpyxl==3.1.2
+numpy==1.26.4
