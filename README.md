@@ -50,13 +50,13 @@ Admins can add/edit/disable rules in the CRM portal. No code change needed.
 
 | Signal | Points |
 |--------|--------|
-| Source: Google_Ads | 25 |
-| Source: Referral | 22 |
-| Source: LinkedIn | 20 |
-| Source: Website | 20 |
-| Source: Facebook_Ads | 18 |
-| Source: Instagram | 15 |
-| Source: Manual | 10 |
+| Source: Google_Ads | 15 |
+| Source: Referral | 28 |
+| Source: LinkedIn | 18 |
+| Source: Website | 22 |
+| Source: Facebook_Ads | 10 |
+| Source: Instagram | 8 |
+| Source: Manual | 30 |
 | Course: Tier-1 (MBA/PGDM/MCA/M.Tech) | 20 |
 | Course: Tier-2 (BBA/BCA/B.Tech) | 12 |
 | Phone + Email both present | 15 |
