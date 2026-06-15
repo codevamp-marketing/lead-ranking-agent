@@ -27,18 +27,18 @@ from __future__ import annotations
 import json
 
 # ── Course demand tiers ───────────────────────────────────────────────────────
-_TIER1_COURSES = {"mba", "pgdm", "mca", "m.tech", "mtech", "msc", "m.sc", "pgpm"}
+_TIER1_COURSES = {"mba", "pgdm", "mca", "m.tech", "mtech", "msc", "m.sc", "pgpm","phd", "ph.d",}
 _TIER2_COURSES = {"bba", "bca", "b.tech", "btech", "bsc", "b.sc", "bcom", "b.com", "ba"}
 
 # ── Source quality scores (matches LeadSource enum exactly) ──────────────────
 _SOURCE_SCORE: dict[str, int] = {
-    "google_ads":   25,
-    "facebook_ads": 18,
-    "instagram":    15,
-    "linkedin":     20,
-    "website":      20,
-    "referral":     22,
-    "manual":       10,
+    "manual":       30,
+    "referral":     28,
+    "website":      22,
+    "linkedin":     18,
+    "google_ads":   15,
+    "facebook_ads": 10,
+    "instagram":     8,
 }
 
 
